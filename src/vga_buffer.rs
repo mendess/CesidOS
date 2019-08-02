@@ -1,5 +1,34 @@
+use core::fmt;
+use volatile::Volatile;
+
+use lazy_static::lazy_static;
+
+use spin::Mutex;
+
+lazy_static! {
+    pub static ref WRITER: Mutex<Writer> = Mutex::new(Writer::new());
+}
+
+#[macro_export]
+macro_rules! print {
+    ($($arg:tt)*) => ($crate::vga_buffer::_print(format_args!($($arg)*)));
+}
+
+#[macro_export]
+macro_rules! println {
+    () => ($crate::print!("\n"));
+    ($($arg:tt)*) => ($crate::print!("{}\n", format_args!($($arg)*)));
+}
+
+#[doc(hidden)]
+pub fn _print(args: fmt::Arguments) {
+    use core::fmt::Write;
+    WRITER.lock().write_fmt(args).unwrap();
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+#[allow(dead_code)]
 pub enum Color {
     Black = 0,
     Blue = 1,
@@ -24,7 +53,7 @@ pub enum Color {
 struct ColorCode(u8);
 
 impl ColorCode {
-    fn new(foreground: Color, background: Color) -> ColorCode {
+    const fn new(foreground: Color, background: Color) -> ColorCode {
         ColorCode((background as u8) << 4 | (foreground as u8))
     }
 }
@@ -36,12 +65,38 @@ struct ScreenChar {
     color_code: ColorCode,
 }
 
+impl ScreenChar {
+    fn new(ascii_character: u8, color_code: ColorCode) -> Self {
+        ScreenChar {
+            ascii_character,
+            color_code,
+        }
+    }
+}
+
 const BUFFER_HEIGHT: usize = 25;
 const BUFFER_WIDTH: usize = 80;
 
 #[repr(transparent)]
 struct Buffer {
-    chars: [[ScreenChar; BUFFER_WIDTH]; BUFFER_HEIGHT],
+    chars: [[Volatile<ScreenChar>; BUFFER_WIDTH]; BUFFER_HEIGHT],
+}
+
+impl Buffer {
+    fn shift_lines_up(&mut self) {
+        for i in 1..BUFFER_HEIGHT {
+            let (left, right) = self.chars.split_at_mut(i);
+            if let Some(x) = left.last_mut() {
+                x.clone_from_slice(&right[0]);
+            }
+        }
+        self.chars[BUFFER_HEIGHT - 1].iter_mut().for_each(|x| {
+            x.write(ScreenChar::new(
+                0,
+                ColorCode::new(Color::Black, Color::Black),
+            ))
+        });
+    }
 }
 
 pub struct Writer {
@@ -73,10 +128,10 @@ impl Writer {
                 let col = self.column_position;
                 let color_code = self.color_code;
 
-                self.buffer.chars[row][col] = ScreenChar {
+                self.buffer.chars[row][col].write(ScreenChar {
                     ascii_character: byte,
                     color_code,
-                };
+                });
                 self.column_position += 1;
             }
         }
@@ -92,6 +147,18 @@ impl Writer {
     }
 
     pub fn new_line(&mut self) {
-        self.line_position += 1;
+        self.column_position = 0;
+        if self.line_position == BUFFER_HEIGHT - 1 {
+            self.buffer.shift_lines_up();
+        } else {
+            self.line_position += 1;
+        }
+    }
+}
+
+impl fmt::Write for Writer {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.write_str(s);
+        Ok(())
     }
 }

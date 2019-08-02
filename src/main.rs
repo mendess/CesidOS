@@ -5,21 +5,29 @@ mod vga_buffer;
 
 use core::panic::PanicInfo;
 
-use vga_buffer::Writer;
-
 #[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
+fn panic(info: &PanicInfo) -> ! {
+    println!("{}", info);
     loop {}
 }
 
 static CESIDOS: &str = "CesidOS";
 static HELLO: &str = "Hello world!";
+static SCROLLING_TEXT: [&str;5] = ["I", "Now", "Have", "Scrolling", "Text"];
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
-    let mut writer = Writer::new();
-    writer.write_str(CESIDOS);
-    writer.write_byte(b'\n');
-    writer.write_str(HELLO);
+    // println!("{}\n{}", CESIDOS, HELLO);
+    for i in 1.. {
+        for i in 0..1000000 {} // Yes I can't sleep
+        if i > 23 && i < 24 + SCROLLING_TEXT.len() {
+            println!("{}", SCROLLING_TEXT[i - 24]);
+        } else {
+            for _ in 0..i {
+                print!("{}", i % 10);
+            }
+            println!();
+        }
+    }
     loop {}
 }
